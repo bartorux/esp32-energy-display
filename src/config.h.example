@@ -1,0 +1,55 @@
+#pragma once
+
+// ============ WiFi (WiFiMulti - dwie sieci) ============
+#define WIFI_SSID1 "your_ssid_1"
+#define WIFI_PASS1 "your_password_1"
+#define WIFI_SSID2 "your_ssid_2"
+#define WIFI_PASS2 "your_password_2"
+
+// ============ NTP ============
+#define NTP_SERVER "pool.ntp.org"
+#define GMT_OFFSET_SEC 3600
+#define DAYLIGHT_OFFSET_SEC 3600
+
+// ============ API PSE ============
+#define PSE_API_HOST "api.raporty.pse.pl"
+#define PSE_API_PATH "/api/rce-pln?$filter=business_date%%20eq%%20'%s'"
+
+// ============ Timing ============
+#define FETCH_INTERVAL_MS (15UL * 60 * 1000)  // 15 min
+#define DISPLAY_INTERVAL_MS 1000               // UI update co 1s (tylko zegar)
+#define WIFI_TIMEOUT_MS   20000
+
+// ============ Display ============
+#define SCREEN_SIZE   240
+#define CENTER_X      120
+#define CENTER_Y      120
+
+// ============ Display pins ============
+// Zdefiniowane w platformio.ini build_flags
+
+// ============ Touch (CST816S) ============
+#define TOUCH_SDA  4
+#define TOUCH_SCL  5
+#define TOUCH_INT  0
+#define TOUCH_RST  1
+#define TOUCH_ADDR 0x15
+
+// ============ Auto-dimming ============
+#define DIM_HOUR_START  22
+#define DIM_HOUR_END     6
+#define DIM_LEVEL       15      // percent brightness at night
+#define BRIGHT_LEVEL   100
+#define DIM_WAKE_SEC    30      // seconds at full brightness after touch in dim mode
+
+// ============ Screen saver ============
+#define SCREENSAVER_TIMEOUT_MS (2UL * 60 * 1000)  // 2 min idle → clock
+
+// ============ Price range ============
+#define PRICE_LOW     300.0f
+#define PRICE_HIGH    700.0f
+#define MAX_PERIODS   96
+#define HOURS_IN_DAY  24
+
+// ============ OTA / mDNS ============
+#define OTA_HOSTNAME "esp-energy"
