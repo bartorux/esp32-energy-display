@@ -278,6 +278,7 @@ static void handleTouch() {
         case GESTURE_SWIPE_LEFT:
         case GESTURE_SWIPE_UP:
         case GESTURE_TAP:
+            displaySlideOut(-1);  // slide old content left
             currentScreen = (currentScreen + 1) % TOTAL_SCREENS;
             Serial.printf("[UI] Screen -> %d\n", currentScreen);
             lastDrawTime = 0;
@@ -285,6 +286,7 @@ static void handleTouch() {
 
         case GESTURE_SWIPE_RIGHT:
         case GESTURE_SWIPE_DOWN:
+            displaySlideOut(1);   // slide old content right
             currentScreen = (currentScreen - 1 + TOTAL_SCREENS) % TOTAL_SCREENS;
             Serial.printf("[UI] Screen -> %d\n", currentScreen);
             lastDrawTime = 0;

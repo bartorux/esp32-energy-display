@@ -123,10 +123,29 @@ static bool doFetch(PriceData &data, const char *dateStr) {
         }
     }
 
+    // Find longest consecutive window of hours below average
+    int bestStart = 0, bestLen = 0, curStart = 0, curLen = 0;
+    for (int h = 0; h < 24; h++) {
+        if (hourlyCnt[h] > 0 && data.hourlyAvg[h] < data.avgPrice) {
+            if (curLen == 0) curStart = h;
+            curLen++;
+            if (curLen > bestLen) {
+                bestLen = curLen;
+                bestStart = curStart;
+            }
+        } else {
+            curLen = 0;
+        }
+    }
+    data.cheapWindowStart = bestStart;
+    data.cheapWindowLen = bestLen;
+
     data.valid = true;
 
-    Serial.printf("[API] OK: %d periods, avg=%.0f, heap=%u\n",
-                  data.totalPeriods, data.avgPrice, ESP.getFreeHeap());
+    Serial.printf("[API] OK: %d periods, avg=%.0f, cheap=%d-%dh, heap=%u\n",
+                  data.totalPeriods, data.avgPrice,
+                  data.cheapWindowStart, data.cheapWindowStart + data.cheapWindowLen,
+                  ESP.getFreeHeap());
 
     return true;
 }

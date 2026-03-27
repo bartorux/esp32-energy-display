@@ -13,6 +13,8 @@ struct PriceData {
     int   currentPeriodIdx;
     int   cheapestHour;     // hour with lowest average price
     int   expensiveHour;    // hour with highest average price
+    int   cheapWindowStart; // start hour of cheapest consecutive window
+    int   cheapWindowLen;   // length in hours of cheapest window
     bool  valid;
 };
 

@@ -154,6 +154,67 @@ static void drawStats3(float v1, float v2, float v3,
     spr.drawString(tmp, 178, 137);
 }
 
+// ---- 24h price ring (between edge r=119 and bg r=113) ----
+
+static void drawPriceRing(const float hourlyAvg[24], float minP, float maxP, int currentHour) {
+    const float rIn = 108.0f, rOut = 118.0f;  // thicker ring
+    const float startDeg = 135.0f;   // lower-left (7:30 position)
+    const float arcDeg = 270.0f;     // to lower-right (4:30 position)
+    const float segDeg = arcDeg / 24.0f;  // 11.25° per hour
+    const float gapDeg = 0.6f;
+    const float step = 0.7f;         // angle step (finer for thicker ring)
+
+    // Dark separator at inner edge of ring
+    for (float a = startDeg; a <= startDeg + arcDeg; a += 0.8f) {
+        float rad = a * 3.14159f / 180.0f;
+        int px = CENTER_X + (int)(cosf(rad) * (rIn - 1.0f));
+        int py = CENTER_Y + (int)(sinf(rad) * (rIn - 1.0f));
+        spr.drawPixel(px, py, spr.color565(8, 12, 15));
+    }
+
+    for (int h = 0; h < 24; h++) {
+        if (hourlyAvg[h] <= 0) continue;
+
+        float t = priceT(hourlyAvg[h], minP, maxP);
+        uint16_t col = priceBg(t);
+
+        if (h == currentHour) {
+            uint8_t r = ((col >> 11) & 0x1F) << 3;
+            uint8_t g = ((col >> 5) & 0x3F) << 2;
+            uint8_t b = (col & 0x1F) << 3;
+            r = (uint8_t)min(255, (int)r + 80);
+            g = (uint8_t)min(255, (int)g + 80);
+            b = (uint8_t)min(255, (int)b + 80);
+            col = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+        }
+
+        float aStart = startDeg + h * segDeg;
+        float aEnd = aStart + segDeg - gapDeg;
+
+        for (float a = aStart; a <= aEnd; a += step) {
+            float rad = a * 3.14159f / 180.0f;
+            float cs = cosf(rad);
+            float sn = sinf(rad);
+            for (float r = rIn; r <= rOut; r += 1.0f) {
+                int px = CENTER_X + (int)(cs * r);
+                int py = CENTER_Y + (int)(sn * r);
+                spr.drawPixel(px, py, col);
+            }
+        }
+    }
+
+    // White tick for current hour
+    float tickRad = (startDeg + currentHour * segDeg + segDeg / 2.0f) * 3.14159f / 180.0f;
+    for (float r = rIn - 2; r <= rIn - 1; r += 1.0f) {
+        spr.drawPixel(CENTER_X + (int)(cosf(tickRad) * r),
+                       CENTER_Y + (int)(sinf(tickRad) * r), C_WHITE);
+    }
+    for (float r = rOut + 1; r <= rOut + 2; r += 1.0f) {
+        spr.drawPixel(CENTER_X + (int)(cosf(tickRad) * r),
+                       CENTER_Y + (int)(sinf(tickRad) * r), C_WHITE);
+    }
+}
+
 // ============ Public API ============
 
 void displayInit() {
@@ -184,6 +245,19 @@ void displaySetBrightness(uint8_t percent) {
     ledcWrite(0, duty);  // channel 0
 }
 
+void displaySlideOut(int direction) {
+    (void)direction;
+    if (!spriteOk) return;
+    // Dim: darken inner area
+    spr.fillCircle(CENTER_X, CENTER_Y, 113, spr.color565(15, 25, 30));
+    spr.pushSprite(0, 0);
+    delay(45);
+    // Dark: full black interior
+    spr.fillCircle(CENTER_X, CENTER_Y, 113, spr.color565(5, 10, 15));
+    spr.pushSprite(0, 0);
+    delay(45);
+}
+
 void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
                float yesterdayAvg) {
     if (!spriteOk) return;
@@ -191,10 +265,13 @@ void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
     float t = priceT(data.currentPrice, data.minPrice, data.maxPrice);
     drawBg(t);
 
-    // Time
+    // 24h price ring + time
     struct tm ti;
     int sec = 0;
-    if (getLocalTime(&ti)) sec = ti.tm_sec;
+    if (getLocalTime(&ti)) {
+        drawPriceRing(data.hourlyAvg, data.minPrice, data.maxPrice, ti.tm_hour);
+        sec = ti.tm_sec;
+    }
     char buf[32];
     snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hour, minute, sec);
     spr.setTextColor(C_WHITE85);
@@ -234,16 +311,22 @@ void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
     // Chart
     drawBarChart(data, data.currentPeriodIdx);
 
-    // Yesterday comparison
-    if (yesterdayAvg > 0 && data.avgPrice > 0) {
+    // Cheap window recommendation or yesterday comparison
+    spr.setTextDatum(TC_DATUM);
+    spr.setTextFont(2);
+    if (data.cheapWindowLen >= 2) {
+        char rec[24];
+        int endH = (data.cheapWindowStart + data.cheapWindowLen) % 24;
+        snprintf(rec, sizeof(rec), "Tanio %d-%dh", data.cheapWindowStart, endH);
+        spr.setTextColor(spr.color565(100, 255, 160));
+        spr.drawString(rec, CENTER_X, 210);
+    } else if (yesterdayAvg > 0 && data.avgPrice > 0) {
         float diff = ((data.avgPrice - yesterdayAvg) / yesterdayAvg) * 100.0f;
         char cmp[16];
         if (diff > 0)
-            snprintf(cmp, sizeof(cmp), "\x18%.0f%%", diff);   // ↑
+            snprintf(cmp, sizeof(cmp), "\x18%.0f%%", diff);
         else
-            snprintf(cmp, sizeof(cmp), "\x19%.0f%%", -diff);  // ↓
-        spr.setTextDatum(TC_DATUM);
-        spr.setTextFont(2);
+            snprintf(cmp, sizeof(cmp), "\x19%.0f%%", -diff);
         spr.setTextColor(diff > 0 ? spr.color565(255, 100, 100)
                                   : spr.color565(100, 255, 160));
         spr.drawString(cmp, CENTER_X, 210);
@@ -296,8 +379,13 @@ void drawTomorrow(const PriceData &data, int hour, int minute, bool available, i
     spr.setTextFont(2);
     spr.drawString(buf, CENTER_X, 18);
 
-    // Label + cheapest hour
-    snprintf(buf, sizeof(buf), "JUTRO / tanio %d:00", data.cheapestHour);
+    // Label + cheap window or cheapest hour
+    if (data.cheapWindowLen >= 2) {
+        int endH = (data.cheapWindowStart + data.cheapWindowLen) % 24;
+        snprintf(buf, sizeof(buf), "JUTRO / tanio %d-%dh", data.cheapWindowStart, endH);
+    } else {
+        snprintf(buf, sizeof(buf), "JUTRO / tanio %d:00", data.cheapestHour);
+    }
     spr.setTextColor(C_WHITE60);
     spr.setTextFont(1);
     spr.drawString(buf, CENTER_X, 38);

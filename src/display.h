@@ -4,6 +4,7 @@
 
 void displayInit();
 void displaySetBrightness(uint8_t percent);
+void displaySlideOut(int direction);  // -1=left, +1=right
 
 void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
                float yesterdayAvg = -1.0f);
