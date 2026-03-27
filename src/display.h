@@ -13,3 +13,4 @@ void drawWeekly(const float *dailyAvg, const char labels[][6], int count,
 void drawClock(int hour, int minute, float currentPrice);
 void drawConnecting();
 void drawError(const char *msg);
+void drawAPSetup(const char *ssid, const char *ip, unsigned long remainingSec);

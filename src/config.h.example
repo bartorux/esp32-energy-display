@@ -1,14 +1,22 @@
 #pragma once
 
 // ============ WiFi (WiFiMulti - dwie sieci) ============
+// Kredencjały wpisane na sztywno (fallback gdy LittleFS puste)
 #define WIFI_SSID1 "your_ssid_1"
 #define WIFI_PASS1 "your_password_1"
 #define WIFI_SSID2 "your_ssid_2"
 #define WIFI_PASS2 "your_password_2"
 
+// ============ WiFi AP (Captive Portal) ============
+// Włącza się automatycznie gdy brak połączenia WiFi
+#define AP_SSID        "ESP-Energy-Setup"
+#define AP_PASS        ""               // puste = otwarta sieć
+#define AP_IP          "192.168.4.1"
+#define AP_TIMEOUT_MS  180000UL         // 3 minuty w trybie AP, potem restart
+
 // ============ NTP ============
-#define NTP_SERVER "pool.ntp.org"
-#define GMT_OFFSET_SEC 3600
+#define NTP_SERVER          "pool.ntp.org"
+#define GMT_OFFSET_SEC      3600
 #define DAYLIGHT_OFFSET_SEC 3600
 
 // ============ API PSE ============
@@ -16,17 +24,14 @@
 #define PSE_API_PATH "/api/rce-pln?$filter=business_date%%20eq%%20'%s'"
 
 // ============ Timing ============
-#define FETCH_INTERVAL_MS (15UL * 60 * 1000)  // 15 min
-#define DISPLAY_INTERVAL_MS 1000               // UI update co 1s (tylko zegar)
-#define WIFI_TIMEOUT_MS   20000
+#define FETCH_INTERVAL_MS   (15UL * 60 * 1000)  // 15 min
+#define DISPLAY_INTERVAL_MS 1000                  // UI update co 1s
+#define WIFI_TIMEOUT_MS     20000
 
 // ============ Display ============
-#define SCREEN_SIZE   240
-#define CENTER_X      120
-#define CENTER_Y      120
-
-// ============ Display pins ============
-// Zdefiniowane w platformio.ini build_flags
+#define SCREEN_SIZE  240
+#define CENTER_X     120
+#define CENTER_Y     120
 
 // ============ Touch (CST816S) ============
 #define TOUCH_SDA  4
@@ -38,18 +43,25 @@
 // ============ Auto-dimming ============
 #define DIM_HOUR_START  22
 #define DIM_HOUR_END     6
-#define DIM_LEVEL       15      // percent brightness at night
+#define DIM_LEVEL       15      // % brightness w nocy
 #define BRIGHT_LEVEL   100
-#define DIM_WAKE_SEC    30      // seconds at full brightness after touch in dim mode
+#define DIM_WAKE_SEC    30      // sekundy na pełnej jasności po dotyku w nocy
 
 // ============ Screen saver ============
-#define SCREENSAVER_TIMEOUT_MS (2UL * 60 * 1000)  // 2 min idle → clock
+// DOMYŚLNIE WYŁĄCZONY - user włącza ręcznie w dashboardzie
+// Gdy włączony: odlicza SCREENSAVER_TIMEOUT_MS od ostatniego dotyku
+#define SCREENSAVER_DEFAULT     false
+#define SCREENSAVER_TIMEOUT_MS  (2UL * 60 * 1000)  // 2 min bezczynności → zegar
 
 // ============ Price range ============
-#define PRICE_LOW     300.0f
-#define PRICE_HIGH    700.0f
-#define MAX_PERIODS   96
-#define HOURS_IN_DAY  24
+#define PRICE_LOW    300.0f
+#define PRICE_HIGH   700.0f
+#define MAX_PERIODS  96
+#define HOURS_IN_DAY 24
 
 // ============ OTA / mDNS ============
 #define OTA_HOSTNAME "esp-energy"
+
+// ============ Storage paths ============
+#define HISTORY_PATH    "/history.json"
+#define WIFI_CREDS_PATH "/wifi.json"     // zapisane przez AP dashboard

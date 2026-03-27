@@ -25,35 +25,43 @@ static const char STA_PAGE[] PROGMEM = R"rawliteral(
 <meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>ESP Energy</title>
 <style>
+:root{--bg:#f0f2f5;--card:#fff;--text:#1a1a2e;--text2:#1f2937;--muted:#6b7280;--muted2:#9ca3af;--border:#e2e5ea;--border2:#e5e7eb;--border3:#f3f4f6;--bar:#cbd5e1;--accent:#1d4ed8;--accent2:#2563eb;--accent3:#3b82f6;--shadow:rgba(0,0,0,.06)}
+body.dark{--bg:#0f1117;--card:#1a1d27;--text:#e2e5ea;--text2:#d1d5db;--muted:#9ca3af;--muted2:#6b7280;--border:#2d3140;--border2:#374151;--border3:#1f2937;--bar:#4b5563;--accent:#60a5fa;--accent2:#3b82f6;--accent3:#2563eb;--shadow:rgba(0,0,0,.3)}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,system-ui,sans-serif;background:#f0f2f5;color:#1a1a2e;padding:12px;max-width:520px;margin:0 auto}
-h1{font-size:1.1em;text-align:center;color:#1d4ed8;margin:8px 0 12px;letter-spacing:.5px}
-h2{font-size:.9em;color:#4b5563;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.c{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;border:1px solid #e2e5ea;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.big{font-size:2.8em;font-weight:700;text-align:center;color:#111827;line-height:1.1}
-.unit{text-align:center;color:#6b7280;font-size:.85em;margin:2px 0 6px}
+body{font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:12px;max-width:520px;margin:0 auto;transition:background .3s,color .3s}
+h1{font-size:1.1em;text-align:center;color:var(--accent);margin:8px 0 12px;letter-spacing:.5px}
+h2{font-size:.9em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.c{background:var(--card);border-radius:14px;padding:14px;margin-bottom:10px;border:1px solid var(--border);box-shadow:0 1px 3px var(--shadow);transition:background .3s,border-color .3s}
+.big{font-size:2.8em;font-weight:700;text-align:center;color:var(--text2);line-height:1.1}
+.unit{text-align:center;color:var(--muted);font-size:.85em;margin:2px 0 6px}
 .row{display:flex;justify-content:space-around;text-align:center}
-.row div{flex:1}.lb{font-size:.7em;color:#6b7280;text-transform:uppercase}.vl{font-size:1.2em;font-weight:600;color:#1f2937}
+.row div{flex:1}.lb{font-size:.7em;color:var(--muted);text-transform:uppercase}.vl{font-size:1.2em;font-weight:600;color:var(--text2)}
 .g{color:#059669}.r{color:#dc2626}.y{color:#d97706}
-.ch{display:flex;align-items:flex-end;height:56px;gap:1px;margin-top:8px;padding-top:6px;border-top:1px solid #e5e7eb}
-.ch .b{flex:1;background:#cbd5e1;border-radius:2px 2px 0 0;min-height:1px;transition:background .2s}
-.ch .b.hl{background:#3b82f6}.ch .b:hover{background:#60a5fa}
+.ch{display:flex;align-items:flex-end;height:56px;gap:1px;margin-top:8px;padding-top:6px;border-top:1px solid var(--border2)}
+.ch .b{flex:1;background:var(--bar);border-radius:2px 2px 0 0;min-height:1px;transition:background .2s}
+.ch .b.hl{background:var(--accent3)}.ch .b:hover{background:#60a5fa}
 .ch .b.cheap{background:#10b981}.ch .b.exp{background:#ef4444}
-.hrs{display:flex;justify-content:space-between;font-size:.6em;color:#9ca3af;margin-top:2px;padding:0 1px}
+.hrs{display:flex;justify-content:space-between;font-size:.6em;color:var(--muted2);margin-top:2px;padding:0 1px}
 table{width:100%;border-collapse:collapse;font-size:.85em}
-th{text-align:left;color:#6b7280;font-weight:500;padding:4px 6px;border-bottom:1px solid #e5e7eb}
-td{padding:4px 6px;border-bottom:1px solid #f3f4f6}
-.sl{width:100%;accent-color:#3b82f6;margin:6px 0}
-.btn{background:#2563eb;color:#fff;border:1px solid #1d4ed8;border-radius:8px;padding:8px 16px;font-size:.9em;cursor:pointer;width:100%;margin-top:6px}
-.btn:hover{background:#1d4ed8}.btn:active{transform:scale(.98)}
+th{text-align:left;color:var(--muted);font-weight:500;padding:4px 6px;border-bottom:1px solid var(--border2)}
+td{padding:4px 6px;border-bottom:1px solid var(--border3)}
+.sl{width:100%;accent-color:var(--accent3);margin:6px 0}
+.btn{background:var(--accent2);color:#fff;border:1px solid var(--accent);border-radius:8px;padding:8px 16px;font-size:.9em;cursor:pointer;width:100%;margin-top:6px}
+.btn:hover{background:var(--accent)}.btn:active{transform:scale(.98)}
 .btn.on{background:#059669;border-color:#047857;color:#fff}
 .btn.danger{background:#dc2626;border-color:#b91c1c;color:#fff}
 .inf{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:.8em}
-.inf .k{color:#6b7280}.inf .v{color:#1f2937;text-align:right}
+.inf .k{color:var(--muted)}.inf .v{color:var(--text2);text-align:right}
 .cmp{text-align:center;font-size:.85em;margin-top:4px}
 .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:.8em;font-weight:600}
-#st{text-align:center;font-size:.75em;color:#9ca3af;margin-top:8px}
+#st{text-align:center;font-size:.75em;color:var(--muted2);margin-top:8px}
+#thm{position:fixed;top:8px;right:8px;background:var(--card);border:1px solid var(--border);border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:1.2em;display:flex;align-items:center;justify-content:center;z-index:10;box-shadow:0 1px 4px var(--shadow)}
 </style></head><body>
+<button id="thm" onclick="toggleTheme()"></button>
+<script>
+function toggleTheme(){document.body.classList.toggle('dark');localStorage.setItem('theme',document.body.classList.contains('dark')?'dark':'light');document.getElementById('thm').textContent=document.body.classList.contains('dark')?'\u2600':'\u263E';}
+if(localStorage.getItem('theme')==='dark'){document.body.classList.add('dark');document.getElementById('thm').textContent='\u2600';}else{document.getElementById('thm').textContent='\u263E';}
+</script>
 <h1>&#x26A1; ESP ENERGY MONITOR</h1>
 <div id="app">&#x0141;adowanie...</div>
 <div id="st"></div>
@@ -155,10 +163,11 @@ function render(){
   <span class="k">RSSI</span><span class="v">${s.rssi} dBm</span>
   <span class="k">IP</span><span class="v">${s.ip}</span>
   <span class="k">Uptime</span><span class="v">${uptime(s.uptime)}</span>
-  <span class="k">SSID</span><span class="v">${s.ssid||'?'}</span>
+  <span class="k">SSID</span><span class="v" id="ssidv"></span>
   </div></div>`;
  }
  $('app').innerHTML=o;
+ let sv=$('ssidv');if(sv)sv.textContent=D.sys&&D.sys.ssid?D.sys.ssid:'?';
  if(D.time)$('st').textContent='Czas ESP: '+D.time+' | auto 60s';
  // Wire up buttons
  let rb=$('rb');
@@ -386,15 +395,17 @@ static void staHandleRefresh() {
 static void staHandleScreensaver() {
     if (ctx.onScreensaverToggle) ctx.onScreensaverToggle();
     bool enabled = *ctx.screensaverEnabled;
-    server.send(200, "application/json",
-        String("{\"ok\":true,\"enabled\":") + (enabled ? "true" : "false") + "}");
+    char json[48];
+    snprintf(json, sizeof(json), "{\"ok\":true,\"enabled\":%s}", enabled ? "true" : "false");
+    server.send(200, "application/json", json);
 }
 
 static void staHandleAutoBri() {
     if (ctx.onAutoBriToggle) ctx.onAutoBriToggle();
     bool isAuto = !(*ctx.manualBrightness);
-    server.send(200, "application/json",
-        String("{\"ok\":true,\"auto\":") + (isAuto ? "true" : "false") + "}");
+    char json[40];
+    snprintf(json, sizeof(json), "{\"ok\":true,\"auto\":%s}", isAuto ? "true" : "false");
+    server.send(200, "application/json", json);
 }
 
 static void staHandleBrightness() {

@@ -25,6 +25,14 @@ void storageSaveDay(const DayRecord &rec) {
 
     for (JsonObject obj : arr) {
         if (strcmp(obj["d"].as<const char *>(), rec.date) == 0) {
+            // Skip write if data unchanged
+            if ((int)rec.minPrice == (obj["mn"] | 0) &&
+                (int)rec.maxPrice == (obj["mx"] | 0) &&
+                (int)rec.avgPrice == (obj["av"] | 0) &&
+                rec.cheapestHour  == (obj["ch"] | 0)) {
+                Serial.printf("[FS] %s unchanged, skip write\n", rec.date);
+                return;
+            }
             obj["mn"] = (int)rec.minPrice;
             obj["mx"] = (int)rec.maxPrice;
             obj["av"] = (int)rec.avgPrice;
@@ -88,14 +96,6 @@ int storageGetRecent(DayRecord *records, int maxCount) {
         count++;
     }
     return count;
-}
-
-String storageGetHistoryJson() {
-    File f = LittleFS.open(HISTORY_PATH, "r");
-    if (!f) return "[]";
-    String s = f.readString();
-    f.close();
-    return s.length() ? s : "[]";
 }
 
 // ─── WiFi credentials ────────────────────────────────────────────────────────

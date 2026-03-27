@@ -455,6 +455,50 @@ void drawError(const char *msg) {
     spr.pushSprite(0, 0);
 }
 
+void drawAPSetup(const char *ssid, const char *ip, unsigned long remainingSec) {
+    if (!spriteOk) return;
+
+    spr.fillSprite(TFT_BLACK);
+    spr.fillCircle(CENTER_X, CENTER_Y, 119, spr.color565(12, 40, 85));
+    spr.fillCircle(CENTER_X, CENTER_Y, 113, spr.color565(8, 25, 60));
+
+    // Title
+    spr.setTextColor(C_WHITE);
+    spr.setTextDatum(TC_DATUM);
+    spr.setTextFont(2);
+    spr.drawString("WiFi Setup", CENTER_X, 38);
+
+    // SSID label + value
+    spr.setTextColor(C_WHITE60);
+    spr.setTextFont(1);
+    spr.drawString("Polacz z siecia:", CENTER_X, 68);
+    spr.setTextColor(C_WHITE);
+    spr.setTextFont(2);
+    spr.drawString(ssid, CENTER_X, 82);
+
+    // IP
+    spr.setTextColor(C_WHITE60);
+    spr.setTextFont(1);
+    spr.drawString("Otworz w przegladarce:", CENTER_X, 112);
+    spr.setTextColor(C_WHITE);
+    spr.setTextFont(2);
+    spr.drawString(ip, CENTER_X, 126);
+
+    // Countdown
+    char buf[16];
+    int min = remainingSec / 60;
+    int sec = remainingSec % 60;
+    snprintf(buf, sizeof(buf), "%d:%02d", min, sec);
+    spr.setTextColor(C_WHITE40);
+    spr.setTextFont(1);
+    spr.drawString("Restart za:", CENTER_X, 160);
+    spr.setTextFont(4);
+    spr.setTextColor(C_WHITE85);
+    spr.drawString(buf, CENTER_X, 174);
+
+    spr.pushSprite(0, 0);
+}
+
 void drawClock(int hour, int minute, float currentPrice) {
     if (!spriteOk) return;
 

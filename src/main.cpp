@@ -83,16 +83,10 @@ void onWebBrightness(uint8_t val) {
 // ─── Ekran na wyświetlaczu podczas AP ─────────────────────────────────────────
 
 static void drawAPMode() {
-    // Rysuj info o trybie AP na ekranie GC9A01
-    // (używamy drawConnecting jako base, ale z własnym tekstem przez drawError)
-    // Trick: zrobimy własny ekran przez drawError ze specjalnym komunikatem
-    // drawError rysuje ciemno-czerwone tło – użyjemy drawConnecting (niebieskie)
-    // zamiast tego wywołamy sekwencję wprost w display.cpp –
-    // ale nie mamy tam dedykowanej funkcji, więc używamy drawConnecting + drawError
-    // jako placeholder. Docelowo można dodać drawAPConfig() do display.cpp.
-    drawError("WiFi AP");
-    // TODO: można dodać dedykowany ekran drawAPConfig() w display.cpp
-    // z info "Polacz z ESP-Energy-Setup"
+    unsigned long elapsed = (millis() - apStartTime) / 1000;
+    unsigned long remaining = (AP_TIMEOUT_MS / 1000 > elapsed)
+                              ? (AP_TIMEOUT_MS / 1000 - elapsed) : 0;
+    drawAPSetup(AP_SSID, AP_IP, remaining);
 }
 
 // ─── WiFi ─────────────────────────────────────────────────────────────────────
@@ -368,7 +362,7 @@ void setup() {
     WiFi.setTxPower(WIFI_POWER_8_5dBm);  // zmniejsza TX → chroni USB-JTAG
 
     // 1. Załaduj zapisane przez AP kredencjały (najwyższy priorytet)
-    bool hasSaved = loadSavedCreds();
+    loadSavedCreds();  // dodaje zapisane creds do WiFiMulti (jeśli istnieją)
 
     // 2. Dodaj hardcoded fallback z config.h (niższy priorytet)
     wifiMulti.addAP(WIFI_SSID1, WIFI_PASS1);
@@ -497,6 +491,7 @@ void loop() {
                 ESP.restart();
             }
         }
+        delay(50);
         return;  // nie wykonuj reszty loop() w trybie AP
     }
 

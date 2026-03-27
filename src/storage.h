@@ -22,7 +22,6 @@ void   storageInit();
 void   storageSaveDay(const DayRecord &rec);
 bool   storageGetYesterday(DayRecord &rec);
 int    storageGetRecent(DayRecord *records, int maxCount);
-String storageGetHistoryJson();
 
 // Zapisane poświadczenia WiFi (z captive portal)
 bool   storageLoadWiFiCreds(WiFiCreds &creds);
