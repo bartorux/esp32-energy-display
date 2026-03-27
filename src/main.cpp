@@ -11,58 +11,111 @@
 #include "storage.h"
 #include "web_dashboard.h"
 
-// Disable brownout detector (USB-JTAG issue during WiFi init)
+// Wyłącz brownout detector (problem USB-JTAG podczas WiFi init)
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
-static WiFiMulti wifiMulti;
-static PriceData todayData;
-static PriceData tomorrowData;
-static unsigned long lastFetchTime = 0;
-static unsigned long lastDrawTime = 0;
-static unsigned long lastTomorrowFetch = 0;
-static bool todayLoaded = false;
+// ─── Typy trybów pracy ────────────────────────────────────────────────────────
+
+enum class AppMode {
+    CONNECTING,   // Trwa łączenie z WiFi
+    AP_CONFIG,    // Brak WiFi → tryb AP captive portal
+    NORMAL        // Normalna praca po sieci STA
+};
+
+static AppMode appMode = AppMode::CONNECTING;
+
+// ─── Stan aplikacji ───────────────────────────────────────────────────────────
+
+static WiFiMulti  wifiMulti;
+static PriceData  todayData;
+static PriceData  tomorrowData;
+
+static unsigned long lastFetchTime      = 0;
+static unsigned long lastDrawTime       = 0;
+static unsigned long lastTomorrowFetch  = 0;
+static unsigned long apStartTime        = 0;     // kiedy weszliśmy w AP mode
+
+static bool todayLoaded    = false;
 static bool tomorrowLoaded = false;
-static int currentScreen = 0;    // 0=today, 1=tomorrow
-static int lastDay = -1;
+static int  currentScreen  = 0;   // 0=today, 1=tomorrow, 2=weekly
+static int  lastDay        = -1;
 
 static const int TOTAL_SCREENS = 3;
 
-// Weekly data for screen 2
+// Dane tygodniowe (ekran 2)
 static float weeklyAvg[MAX_HISTORY_DAYS];
-static char weeklyLabels[MAX_HISTORY_DAYS][6];  // "MM-DD"
-static int weeklyCount = 0;
+static char  weeklyLabels[MAX_HISTORY_DAYS][6];
+static int   weeklyCount = 0;
 
-// Dimming
-static uint8_t currentBrightness = BRIGHT_LEVEL;
-static unsigned long dimWakeUntil = 0;
-static bool manualBrightness = false;  // true = web override, skip auto-dimming
+// Auto-ściemnianie
+static uint8_t       currentBrightness = BRIGHT_LEVEL;
+static unsigned long dimWakeUntil      = 0;
+static bool          manualBrightness  = false;
 
-// Screensaver
-static unsigned long lastTouchTime = 0;
-static bool screenSaverOn = false;
+// Wygaszacz – DOMYŚLNIE WYŁĄCZONY
+// Logika: screensaverEnabled = false → timer nigdy nie odpala
+// User włącza go w dashboardzie → timer zaczyna odliczać od ostatniego dotyku
+// Wyłączenie w dashboardzie → natychmiastowe wyłączenie wygaszacza
+static unsigned long lastTouchTime     = 0;
+static bool          screenSaverOn     = false;
+static bool          screensaverEnabled = SCREENSAVER_DEFAULT;  // false
 
-// Yesterday comparison
+// Porównanie z wczoraj
 static float yesterdayAvg = -1.0f;
 
-// Web refresh flag
+// Flaga odświeżenia z web
 static volatile bool webRefreshRequested = false;
-// Screensaver enabled (togglable from web)
-static bool screensaverEnabled = true;
 
-// Callbacks for web dashboard
+// ─── Callbacki web dashboard ──────────────────────────────────────────────────
+
 void onWebRefresh() {
     webRefreshRequested = true;
 }
 
 void onWebBrightness(uint8_t val) {
-    manualBrightness = true;
+    manualBrightness  = true;
     currentBrightness = val;
     displaySetBrightness(val);
     Serial.printf("[WEB] Brightness -> %d%% (manual)\n", val);
 }
 
-bool connectWiFi() {
+// ─── Ekran na wyświetlaczu podczas AP ─────────────────────────────────────────
+
+static void drawAPMode() {
+    // Rysuj info o trybie AP na ekranie GC9A01
+    // (używamy drawConnecting jako base, ale z własnym tekstem przez drawError)
+    // Trick: zrobimy własny ekran przez drawError ze specjalnym komunikatem
+    // drawError rysuje ciemno-czerwone tło – użyjemy drawConnecting (niebieskie)
+    // zamiast tego wywołamy sekwencję wprost w display.cpp –
+    // ale nie mamy tam dedykowanej funkcji, więc używamy drawConnecting + drawError
+    // jako placeholder. Docelowo można dodać drawAPConfig() do display.cpp.
+    drawError("WiFi AP");
+    // TODO: można dodać dedykowany ekran drawAPConfig() w display.cpp
+    // z info "Polacz z ESP-Energy-Setup"
+}
+
+// ─── WiFi ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Próbuje załadować kredencjały z LittleFS i dodać je do WiFiMulti.
+ * Zwraca true jeśli znaleziono zapisany SSID.
+ */
+static bool loadSavedCreds() {
+    WiFiCreds creds;
+    if (storageLoadWiFiCreds(creds)) {
+        wifiMulti.addAP(creds.ssid, creds.pass);
+        Serial.printf("[WIFI] Loaded saved creds: '%s'\n", creds.ssid);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Łączy z WiFi przez WiFiMulti. Wyświetla ekran "Łączenie...".
+ * Zwraca true przy sukcesie.
+ */
+static bool connectWiFi() {
     Serial.println("[WIFI] Connecting (WiFiMulti)...");
     drawConnecting();
 
@@ -75,14 +128,40 @@ bool connectWiFi() {
         delay(500);
         Serial.print(".");
     }
-
     Serial.printf("\n[WIFI] Connected to '%s', IP: %s, RSSI: %d\n",
                   WiFi.SSID().c_str(),
-                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+                  WiFi.localIP().toString().c_str(),
+                  WiFi.RSSI());
     return true;
 }
 
-void syncTime() {
+/**
+ * Startuje tryb AP (SoftAP + captive portal DNS + serwer konfiguracyjny).
+ * Wyświetla informację na ekranie.
+ */
+static void startAPMode() {
+    Serial.println("[AP] Starting Access Point...");
+    appMode = AppMode::AP_CONFIG;
+    apStartTime = millis();
+
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID, strlen(AP_PASS) ? AP_PASS : nullptr);
+    delay(200);
+
+    Serial.printf("[AP] SSID: %s, IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+    // Ekran informacyjny
+    drawAPMode();
+
+    // Serwer captive portal
+    WebContext wctx = {};   // AP mode – większość pól null, nie potrzeba
+    wctx.onWiFiSave = nullptr;  // restart jest w handleWiFiSave
+    apServerInit(wctx);
+}
+
+// ─── NTP ──────────────────────────────────────────────────────────────────────
+
+static void syncTime() {
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
     struct tm timeinfo;
     int retries = 0;
@@ -97,30 +176,27 @@ void syncTime() {
     }
 }
 
-void saveTodayToHistory() {
+// ─── Historia / tygodniowe ────────────────────────────────────────────────────
+
+static void saveTodayToHistory() {
     if (!todayLoaded) return;
     struct tm ti;
     if (!getLocalTime(&ti)) return;
-
     DayRecord rec;
     strftime(rec.date, sizeof(rec.date), "%Y-%m-%d", &ti);
-    rec.minPrice = todayData.minPrice;
-    rec.maxPrice = todayData.maxPrice;
-    rec.avgPrice = todayData.avgPrice;
+    rec.minPrice     = todayData.minPrice;
+    rec.maxPrice     = todayData.maxPrice;
+    rec.avgPrice     = todayData.avgPrice;
     rec.cheapestHour = todayData.cheapestHour;
     storageSaveDay(rec);
 }
 
-void loadYesterdayAvg() {
+static void loadYesterdayAvg() {
     DayRecord rec;
-    if (storageGetYesterday(rec)) {
-        yesterdayAvg = rec.avgPrice;
-    } else {
-        yesterdayAvg = -1.0f;
-    }
+    yesterdayAvg = storageGetYesterday(rec) ? rec.avgPrice : -1.0f;
 }
 
-void loadWeeklyData() {
+static void loadWeeklyData() {
     static DayRecord records[MAX_HISTORY_DAYS];
     int count = storageGetRecent(records, MAX_HISTORY_DAYS);
     weeklyCount = count;
@@ -136,45 +212,36 @@ void loadWeeklyData() {
     Serial.printf("[APP] Weekly data: %d days\n", weeklyCount);
 }
 
-void fetchAll() {
+// ─── Fetch danych z API ───────────────────────────────────────────────────────
+
+static void fetchAll() {
     if (wifiMulti.run() != WL_CONNECTED) {
         if (!connectWiFi()) return;
     }
-
-    // Fetch today
     if (fetchPrices(todayData)) {
-        todayLoaded = true;
+        todayLoaded   = true;
         lastFetchTime = millis();
         saveTodayToHistory();
         loadYesterdayAvg();
     }
-
-    // Try fetching tomorrow
     if (fetchPricesForDate(tomorrowData, 1)) {
-        tomorrowLoaded = true;
+        tomorrowLoaded    = true;
         lastTomorrowFetch = millis();
-        Serial.printf("[API] Tomorrow data: %d periods, min=%.0f at %d:00\n",
+        Serial.printf("[API] Tomorrow: %d periods, min=%.0f at %d:00\n",
                       tomorrowData.totalPeriods, tomorrowData.minPrice, tomorrowData.cheapestHour);
     } else {
         tomorrowLoaded = false;
     }
-
     Serial.printf("[API] Heap after fetchAll: %u\n", ESP.getFreeHeap());
 }
 
-void updateBrightness(int hour) {
-    if (manualBrightness) return;  // web override active
+// ─── Auto-ściemnianie ─────────────────────────────────────────────────────────
 
+static void updateBrightness(int hour) {
+    if (manualBrightness) return;
     bool nightTime = (hour >= DIM_HOUR_START || hour < DIM_HOUR_END);
     unsigned long now = millis();
-
-    uint8_t target;
-    if (nightTime && now > dimWakeUntil) {
-        target = DIM_LEVEL;
-    } else {
-        target = BRIGHT_LEVEL;
-    }
-
+    uint8_t target = (nightTime && now > dimWakeUntil) ? DIM_LEVEL : BRIGHT_LEVEL;
     if (target != currentBrightness) {
         currentBrightness = target;
         displaySetBrightness(currentBrightness);
@@ -182,23 +249,27 @@ void updateBrightness(int hour) {
     }
 }
 
-void handleTouch() {
+// ─── Obsługa dotyku ───────────────────────────────────────────────────────────
+
+static void handleTouch() {
     TouchGesture g = touchPoll();
     if (g == GESTURE_NONE) return;
 
     unsigned long now = millis();
-    lastTouchTime = now;
 
-    // Wake from screensaver
+    // Wygaszacz: każdy dotyk go wybudza i resetuje timer
     if (screenSaverOn) {
         screenSaverOn = false;
-        lastDrawTime = 0;
-        Serial.println("[UI] Screensaver off");
-        // Don't process gesture further - just wake up
-        return;
+        lastDrawTime  = 0;
+        lastTouchTime = now;
+        Serial.println("[UI] Screensaver off (touch)");
+        return;  // tylko wybudzamy, nie przetwarzamy gestu dalej
     }
 
-    // Wake brightness if dimmed
+    // Reset timera wygaszacza przy każdym geście
+    lastTouchTime = now;
+
+    // Wybudź z auto-ściemniania nocnego
     struct tm ti;
     if (getLocalTime(&ti)) {
         bool nightTime = (ti.tm_hour >= DIM_HOUR_START || ti.tm_hour < DIM_HOUR_END);
@@ -213,7 +284,6 @@ void handleTouch() {
         case GESTURE_SWIPE_LEFT:
         case GESTURE_SWIPE_UP:
         case GESTURE_TAP:
-            // Next screen
             currentScreen = (currentScreen + 1) % TOTAL_SCREENS;
             Serial.printf("[UI] Screen -> %d\n", currentScreen);
             lastDrawTime = 0;
@@ -221,7 +291,6 @@ void handleTouch() {
 
         case GESTURE_SWIPE_RIGHT:
         case GESTURE_SWIPE_DOWN:
-            // Previous screen
             currentScreen = (currentScreen - 1 + TOTAL_SCREENS) % TOTAL_SCREENS;
             Serial.printf("[UI] Screen -> %d\n", currentScreen);
             lastDrawTime = 0;
@@ -239,23 +308,73 @@ void handleTouch() {
     }
 }
 
+// ─── Rysowanie bieżącego ekranu ───────────────────────────────────────────────
+
+static void drawCurrentScreen(const struct tm &timeinfo) {
+    if (screenSaverOn) {
+        float price = todayLoaded ? todayData.currentPrice : 0;
+        drawClock(timeinfo.tm_hour, timeinfo.tm_min, price);
+        return;
+    }
+    if (!todayLoaded) {
+        drawError("Brak danych");
+        return;
+    }
+
+    // Aktualizuj aktualny przedział cenowy
+    int mins = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+    todayData.currentPeriodIdx = mins / 15;
+    if (todayData.currentPeriodIdx >= todayData.totalPeriods)
+        todayData.currentPeriodIdx = todayData.totalPeriods - 1;
+    if (todayData.currentPeriodIdx >= 0)
+        todayData.currentPrice = todayData.prices[todayData.currentPeriodIdx];
+
+    switch (currentScreen) {
+        case 0:
+            drawToday(todayData, timeinfo.tm_hour, timeinfo.tm_min,
+                      TOTAL_SCREENS, yesterdayAvg);
+            break;
+        case 1:
+            drawTomorrow(tomorrowData, timeinfo.tm_hour, timeinfo.tm_min,
+                         tomorrowLoaded, TOTAL_SCREENS);
+            break;
+        case 2:
+            if (weeklyCount > 0)
+                drawWeekly(weeklyAvg, weeklyLabels, weeklyCount,
+                           timeinfo.tm_hour, timeinfo.tm_min, TOTAL_SCREENS);
+            else
+                drawError("Brak historii");
+            break;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SETUP
+// ─────────────────────────────────────────────────────────────────────────────
+
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n=== ESP32 Energy Price Display ===");
+    Serial.println("\n=== ESP32-C3 Energy Price Display ===");
 
     displayInit();
     touchInit();
     storageInit();
 
-    // WiFiMulti
+    // ── Konfiguracja WiFi ──
     WiFi.mode(WIFI_STA);
-    WiFi.setTxPower(WIFI_POWER_8_5dBm);  // reduce TX to prevent USB-JTAG brownout
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);  // zmniejsza TX → chroni USB-JTAG
+
+    // 1. Załaduj zapisane przez AP kredencjały (najwyższy priorytet)
+    bool hasSaved = loadSavedCreds();
+
+    // 2. Dodaj hardcoded fallback z config.h (niższy priorytet)
     wifiMulti.addAP(WIFI_SSID1, WIFI_PASS1);
     wifiMulti.addAP(WIFI_SSID2, WIFI_PASS2);
 
+    // 3. Próbuj połączyć (3 próby)
     bool wifiOk = false;
     for (int attempt = 0; attempt < 3 && !wifiOk; attempt++) {
         if (attempt > 0) {
@@ -266,18 +385,21 @@ void setup() {
     }
 
     if (!wifiOk) {
-        drawError("WiFi failed");
-        delay(30000);
-        ESP.restart();
+        // ── Fallback: tryb AP konfiguracyjny ──
+        Serial.println("[WIFI] All attempts failed → starting AP config mode");
+        startAPMode();
+        // setup() kończy się tutaj; loop() obsłuży tryb AP
         return;
     }
+
+    // ── WiFi OK → tryb normalny ──
+    appMode = AppMode::NORMAL;
 
     syncTime();
 
     // mDNS
-    if (MDNS.begin(OTA_HOSTNAME)) {
+    if (MDNS.begin(OTA_HOSTNAME))
         Serial.printf("[mDNS] http://%s.local\n", OTA_HOSTNAME);
-    }
 
     // OTA
     ArduinoOTA.setHostname(OTA_HOSTNAME);
@@ -290,150 +412,169 @@ void setup() {
     ArduinoOTA.begin();
     Serial.println("[OTA] Ready");
 
-    // Web server
+    // Web dashboard (tryb STA)
     WebContext wctx;
-    wctx.today = &todayData;
-    wctx.tomorrow = &tomorrowData;
-    wctx.todayOk = &todayLoaded;
-    wctx.tomorrowOk = &tomorrowLoaded;
-    wctx.brightness = &currentBrightness;
-    wctx.screenSaverOn = &screenSaverOn;
+    wctx.today              = &todayData;
+    wctx.tomorrow           = &tomorrowData;
+    wctx.todayOk            = &todayLoaded;
+    wctx.tomorrowOk         = &tomorrowLoaded;
+    wctx.brightness         = &currentBrightness;
+    wctx.screenSaverOn      = &screenSaverOn;
     wctx.screensaverEnabled = &screensaverEnabled;
-    wctx.manualBrightness = &manualBrightness;
-    wctx.onRefresh = onWebRefresh;
-    wctx.onBrightness = onWebBrightness;
-    wctx.onScreensaverToggle = []() { screensaverEnabled = !screensaverEnabled; };
+    wctx.manualBrightness   = &manualBrightness;
+    wctx.onRefresh          = onWebRefresh;
+    wctx.onBrightness       = onWebBrightness;
+    wctx.onScreensaverToggle = []() {
+        screensaverEnabled = !screensaverEnabled;
+        if (!screensaverEnabled) {
+            // Wyłączono wygaszacz → natychmiast go gasi
+            screenSaverOn = false;
+            lastDrawTime  = 0;
+        } else {
+            // Włączono → reset timera od teraz
+            lastTouchTime = millis();
+        }
+        Serial.printf("[WEB] Screensaver -> %s\n", screensaverEnabled ? "ON" : "OFF");
+    };
     wctx.onAutoBriToggle = []() {
         manualBrightness = !manualBrightness;
         if (!manualBrightness) {
-            // Wracamy na auto - wymuszamy natychmiastowe przeliczenie
-            currentBrightness = 0;  // force update in next loop
+            currentBrightness = 0;  // wymusza natychmiastowe przeliczenie w loop()
             Serial.println("[WEB] Brightness -> AUTO");
         } else {
             Serial.printf("[WEB] Brightness -> MANUAL (%d%%)\n", currentBrightness);
         }
     };
+    wctx.onWiFiSave = nullptr;  // nie potrzeba w STA (obsługa przez /api/wifi-reset)
     webserverInit(wctx);
 
-    memset(&todayData, 0, sizeof(todayData));
+    // Inicjalna kolekcja danych
+    memset(&todayData,    0, sizeof(todayData));
     memset(&tomorrowData, 0, sizeof(tomorrowData));
     fetchAll();
     loadWeeklyData();
 
-    if (!todayLoaded) {
-        drawError("API error");
-    }
+    if (!todayLoaded) drawError("API error");
 
     lastTouchTime = millis();
     Serial.printf("[SYS] Free heap: %d\n", ESP.getFreeHeap());
+    Serial.printf("[SYS] Screensaver: %s (default: OFF)\n",
+                  screensaverEnabled ? "ON" : "OFF");
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+
 void loop() {
-    // OTA + WebServer
+
+    // ── Tryb AP captive portal ────────────────────────────────────────────────
+    if (appMode == AppMode::AP_CONFIG) {
+        apServerHandle();
+
+        // Co 5 sekund odśwież ekran (pokazuj czas AP mode)
+        unsigned long now = millis();
+        if (now - lastDrawTime >= 5000) {
+            lastDrawTime = now;
+            // Pokaż info na ekranie – czas który minął od startu AP
+            unsigned long elapsed = (now - apStartTime) / 1000;
+            unsigned long remaining = (AP_TIMEOUT_MS / 1000 > elapsed)
+                                      ? (AP_TIMEOUT_MS / 1000 - elapsed) : 0;
+            Serial.printf("[AP] Active %lus, remaining %lus, clients: %d\n",
+                          elapsed, remaining, WiFi.softAPgetStationNum());
+            drawAPMode();
+        }
+
+        // Timeout AP mode → restart (ale nie gdy ktoś jest podłączony!)
+        if (millis() - apStartTime >= AP_TIMEOUT_MS) {
+            if (WiFi.softAPgetStationNum() > 0) {
+                // Ktoś jest podłączony — reset timera, nie restartuj
+                apStartTime = millis();
+                Serial.println("[AP] Client connected — timer reset");
+            } else {
+                Serial.println("[AP] Timeout — restarting");
+                delay(200);
+                ESP.restart();
+            }
+        }
+        return;  // nie wykonuj reszty loop() w trybie AP
+    }
+
+    // ── Tryb normalny STA ─────────────────────────────────────────────────────
+
     ArduinoOTA.handle();
     webserverHandle();
-
-    // Handle touch input
     handleTouch();
 
     unsigned long now = millis();
-
-    // Day transition: at midnight, shift tomorrow -> today
     struct tm timeinfo;
+
     if (getLocalTime(&timeinfo)) {
+        // Zmiana dnia → przesunięcie jutro → dziś
         if (lastDay >= 0 && timeinfo.tm_mday != lastDay) {
             Serial.println("[APP] Day changed!");
             if (tomorrowLoaded) {
-                todayData = tomorrowData;
+                todayData  = tomorrowData;
                 todayLoaded = true;
             }
             tomorrowLoaded = false;
-            currentScreen = 0;
-            lastFetchTime = 0;  // trigger fresh fetch
-            loadWeeklyData();   // refresh weekly chart
+            currentScreen  = 0;
+            lastFetchTime  = 0;
+            loadWeeklyData();
         }
         lastDay = timeinfo.tm_mday;
 
-        // Auto-dimming
         updateBrightness(timeinfo.tm_hour);
     }
 
-    // Web-triggered refresh
+    // Odświeżenie z web
     if (webRefreshRequested) {
         webRefreshRequested = false;
         Serial.println("[WEB] Refresh requested");
         fetchAll();
     }
 
-    // Fetch new data every 15 minutes
+    // Fetch danych co 15 min
     if (now - lastFetchTime >= FETCH_INTERVAL_MS || !todayLoaded) {
         fetchAll();
     }
 
-    // Screensaver check (only if enabled)
-    if (screensaverEnabled && !screenSaverOn && (now - lastTouchTime >= SCREENSAVER_TIMEOUT_MS)) {
-        screenSaverOn = true;
-        Serial.println("[UI] Screensaver on");
+    // ── Logika wygaszacza ─────────────────────────────────────────────────────
+    // screensaverEnabled=false (domyślnie) → timer nigdy nie odpala
+    // screensaverEnabled=true → odliczamy od lastTouchTime
+    if (screensaverEnabled && !screenSaverOn) {
+        if (now - lastTouchTime >= SCREENSAVER_TIMEOUT_MS) {
+            screenSaverOn = true;
+            Serial.println("[UI] Screensaver ON (timeout)");
+        }
     }
-    // If screensaver was disabled while active, turn it off
+    // Wygaszacz wyłączony przez dashboard podczas gdy był aktywny
     if (!screensaverEnabled && screenSaverOn) {
         screenSaverOn = false;
-        lastDrawTime = 0;
-        Serial.println("[UI] Screensaver disabled via web");
+        lastDrawTime  = 0;
+        Serial.println("[UI] Screensaver OFF (disabled via web)");
     }
 
-    // Update display every 1 second
+    // ── Rysowanie ekranu co 1 sekundę ────────────────────────────────────────
     if (now - lastDrawTime >= DISPLAY_INTERVAL_MS) {
         lastDrawTime = now;
-
         if (getLocalTime(&timeinfo)) {
-            if (screenSaverOn) {
-                float price = todayLoaded ? todayData.currentPrice : 0;
-                drawClock(timeinfo.tm_hour, timeinfo.tm_min, price);
-            } else if (todayLoaded) {
-                int mins = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-                todayData.currentPeriodIdx = mins / 15;
-                if (todayData.currentPeriodIdx >= todayData.totalPeriods)
-                    todayData.currentPeriodIdx = todayData.totalPeriods - 1;
-                if (todayData.currentPeriodIdx >= 0)
-                    todayData.currentPrice = todayData.prices[todayData.currentPeriodIdx];
-
-                switch (currentScreen) {
-                    case 0:
-                        drawToday(todayData, timeinfo.tm_hour, timeinfo.tm_min,
-                                  TOTAL_SCREENS, yesterdayAvg);
-                        break;
-                    case 1:
-                        drawTomorrow(tomorrowData, timeinfo.tm_hour, timeinfo.tm_min,
-                                     tomorrowLoaded, TOTAL_SCREENS);
-                        break;
-                    case 2:
-                        if (weeklyCount > 0) {
-                            drawWeekly(weeklyAvg, weeklyLabels, weeklyCount,
-                                       timeinfo.tm_hour, timeinfo.tm_min, TOTAL_SCREENS);
-                        } else {
-                            drawError("Brak historii");
-                        }
-                        break;
-                }
-            } else {
-                drawError("Brak danych");
-            }
+            drawCurrentScreen(timeinfo);
         }
     }
 
-    // Heap watchdog - log every 30s, restart if critically low
+    // ── Watchdog sterty ───────────────────────────────────────────────────────
     static unsigned long lastHeapLog = 0;
     static uint32_t minHeapSeen = 999999;
     if (now - lastHeapLog >= 30000) {
         lastHeapLog = now;
         uint32_t freeHeap = ESP.getFreeHeap();
-        uint32_t minFree = ESP.getMinFreeHeap();
+        uint32_t minFree  = ESP.getMinFreeHeap();
         if (freeHeap < minHeapSeen) minHeapSeen = freeHeap;
         Serial.printf("[SYS] Heap: %u B (min ever: %u, session min: %u)\n",
                       freeHeap, minFree, minHeapSeen);
         if (freeHeap < 15000) {
-            Serial.println("[SYS] Heap critical - restarting!");
+            Serial.println("[SYS] Heap critical — restarting!");
             delay(100);
             ESP.restart();
         }

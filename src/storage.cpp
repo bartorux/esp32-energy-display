@@ -1,8 +1,9 @@
 #include "storage.h"
+#include "config.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
-static const char *HISTORY_PATH = "/history.json";
+// ─── Init ────────────────────────────────────────────────────────────────────
 
 void storageInit() {
     if (!LittleFS.begin(true)) {
@@ -13,20 +14,17 @@ void storageInit() {
                   LittleFS.usedBytes(), LittleFS.totalBytes());
 }
 
+// ─── Historia cen ────────────────────────────────────────────────────────────
+
 void storageSaveDay(const DayRecord &rec) {
-    // Load existing history
     JsonDocument doc;
     File f = LittleFS.open(HISTORY_PATH, "r");
-    if (f) {
-        deserializeJson(doc, f);
-        f.close();
-    }
+    if (f) { deserializeJson(doc, f); f.close(); }
 
     JsonArray arr = doc.is<JsonArray>() ? doc.as<JsonArray>() : doc.to<JsonArray>();
 
-    // Check if this date already exists → update
     for (JsonObject obj : arr) {
-        if (strcmp(obj["d"].as<const char*>(), rec.date) == 0) {
+        if (strcmp(obj["d"].as<const char *>(), rec.date) == 0) {
             obj["mn"] = (int)rec.minPrice;
             obj["mx"] = (int)rec.maxPrice;
             obj["av"] = (int)rec.avgPrice;
@@ -34,52 +32,38 @@ void storageSaveDay(const DayRecord &rec) {
             goto save;
         }
     }
-
-    // Add new entry
     {
         JsonObject o = arr.add<JsonObject>();
-        o["d"] = rec.date;
+        o["d"]  = rec.date;
         o["mn"] = (int)rec.minPrice;
         o["mx"] = (int)rec.maxPrice;
         o["av"] = (int)rec.avgPrice;
         o["ch"] = rec.cheapestHour;
     }
-
-    // FIFO rotation: keep only last MAX_HISTORY_DAYS
-    while (arr.size() > MAX_HISTORY_DAYS) {
-        arr.remove(0);
-    }
+    while (arr.size() > MAX_HISTORY_DAYS) arr.remove(0);
 
 save:
     f = LittleFS.open(HISTORY_PATH, "w");
-    if (f) {
-        serializeJson(doc, f);
-        f.close();
-        Serial.printf("[FS] Saved %s, %d days in history\n", rec.date, arr.size());
-    }
+    if (f) { serializeJson(doc, f); f.close();
+        Serial.printf("[FS] Saved %s, %d days in history\n", rec.date, arr.size()); }
 }
 
 bool storageGetYesterday(DayRecord &rec) {
     File f = LittleFS.open(HISTORY_PATH, "r");
     if (!f) return false;
-
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, f);
     f.close();
     if (err) return false;
-
     JsonArray arr = doc.as<JsonArray>();
     int n = arr.size();
-    if (n < 2) return false;  // need at least 2 entries (today + yesterday)
-
-    // Yesterday = second to last entry
+    if (n < 2) return false;
     JsonObject obj = arr[n - 2];
     strlcpy(rec.date, obj["d"] | "", sizeof(rec.date));
-    rec.minPrice = obj["mn"] | 0;
-    rec.maxPrice = obj["mx"] | 0;
-    rec.avgPrice = obj["av"] | 0;
+    rec.minPrice    = obj["mn"] | 0;
+    rec.maxPrice    = obj["mx"] | 0;
+    rec.avgPrice    = obj["av"] | 0;
     rec.cheapestHour = obj["ch"] | 0;
-
     Serial.printf("[FS] Yesterday %s: avg=%.0f\n", rec.date, rec.avgPrice);
     return true;
 }
@@ -87,11 +71,9 @@ bool storageGetYesterday(DayRecord &rec) {
 int storageGetRecent(DayRecord *records, int maxCount) {
     File f = LittleFS.open(HISTORY_PATH, "r");
     if (!f) return 0;
-
     JsonDocument doc;
     if (deserializeJson(doc, f)) { f.close(); return 0; }
     f.close();
-
     JsonArray arr = doc.as<JsonArray>();
     int n = arr.size();
     int start = (n > maxCount) ? n - maxCount : 0;
@@ -99,9 +81,9 @@ int storageGetRecent(DayRecord *records, int maxCount) {
     for (int i = start; i < n; i++) {
         JsonObject obj = arr[i];
         strlcpy(records[count].date, obj["d"] | "", sizeof(records[count].date));
-        records[count].minPrice = obj["mn"] | 0;
-        records[count].maxPrice = obj["mx"] | 0;
-        records[count].avgPrice = obj["av"] | 0;
+        records[count].minPrice    = obj["mn"] | 0;
+        records[count].maxPrice    = obj["mx"] | 0;
+        records[count].avgPrice    = obj["av"] | 0;
         records[count].cheapestHour = obj["ch"] | 0;
         count++;
     }
@@ -114,4 +96,41 @@ String storageGetHistoryJson() {
     String s = f.readString();
     f.close();
     return s.length() ? s : "[]";
+}
+
+// ─── WiFi credentials ────────────────────────────────────────────────────────
+
+bool storageLoadWiFiCreds(WiFiCreds &creds) {
+    File f = LittleFS.open(WIFI_CREDS_PATH, "r");
+    if (!f) return false;
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+    if (err) return false;
+    const char *s = doc["ssid"] | "";
+    const char *p = doc["pass"] | "";
+    if (strlen(s) == 0) return false;
+    strlcpy(creds.ssid, s, sizeof(creds.ssid));
+    strlcpy(creds.pass, p, sizeof(creds.pass));
+    Serial.printf("[FS] Loaded WiFi creds: ssid='%s'\n", creds.ssid);
+    return true;
+}
+
+bool storageSaveWiFiCreds(const char *ssid, const char *pass) {
+    JsonDocument doc;
+    doc["ssid"] = ssid;
+    doc["pass"] = pass;
+    File f = LittleFS.open(WIFI_CREDS_PATH, "w");
+    if (!f) { Serial.println("[FS] Cannot write wifi.json"); return false; }
+    serializeJson(doc, f);
+    f.close();
+    Serial.printf("[FS] WiFi creds saved: ssid='%s'\n", ssid);
+    return true;
+}
+
+void storageDeleteWiFiCreds() {
+    if (LittleFS.exists(WIFI_CREDS_PATH)) {
+        LittleFS.remove(WIFI_CREDS_PATH);
+        Serial.println("[FS] WiFi creds deleted");
+    }
 }

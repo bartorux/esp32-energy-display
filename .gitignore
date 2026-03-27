@@ -1,3 +1,11 @@
 .pio
 .claude
 src/config.h
+
+# Root-level working copies
+/config.h
+/main.cpp
+/storage.cpp
+/storage.h
+/web_dashboard.cpp
+/web_dashboard.h
