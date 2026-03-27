@@ -16,6 +16,13 @@ struct WiFiCreds {
     char pass[64];
 };
 
+struct UserSettings {
+    uint8_t brightness;          // 0-100
+    bool    manualBright;
+    bool    screensaverOn;
+    float   priceAlertThreshold; // 0 = disabled
+};
+
 void   storageInit();
 
 // Historia cen
@@ -27,3 +34,7 @@ int    storageGetRecent(DayRecord *records, int maxCount);
 bool   storageLoadWiFiCreds(WiFiCreds &creds);
 bool   storageSaveWiFiCreds(const char *ssid, const char *pass);
 void   storageDeleteWiFiCreds();
+
+// Ustawienia użytkownika (persystencja)
+bool   storageLoadSettings(UserSettings &s);
+bool   storageSaveSettings(const UserSettings &s);

@@ -67,7 +67,25 @@ static float yesterdayAvg = -1.0f;
 // Flaga odświeżenia z web
 static volatile bool webRefreshRequested = false;
 
+// Persystencja ustawień
+static bool          settingsDirty     = false;
+static unsigned long settingsDirtyTime = 0;
+#define SETTINGS_DEBOUNCE_MS 2000
+
+// Trend cenowy
+enum PriceTrend { TREND_FLAT = 0, TREND_UP = 1, TREND_DOWN = -1 };
+static PriceTrend currentTrend = TREND_FLAT;
+
+// Alert cenowy
+static float priceAlertThreshold = 0.0f;  // 0 = disabled
+static bool  alertActive         = false;
+
 // ─── Callbacki web dashboard ──────────────────────────────────────────────────
+
+static void markSettingsDirty() {
+    settingsDirty     = true;
+    settingsDirtyTime = millis();
+}
 
 void onWebRefresh() {
     webRefreshRequested = true;
@@ -77,6 +95,7 @@ void onWebBrightness(uint8_t val) {
     manualBrightness  = true;
     currentBrightness = val;
     displaySetBrightness(val);
+    markSettingsDirty();
     Serial.printf("[WEB] Brightness -> %d%% (manual)\n", val);
 }
 
@@ -190,6 +209,11 @@ static void loadYesterdayAvg() {
     yesterdayAvg = storageGetYesterday(rec) ? rec.avgPrice : -1.0f;
 }
 
+// Poprzedni tydzień (do ghost bars)
+static float prevWeekAvg[7];
+static int   prevWeekCount = 0;
+static float weeklyChangePercent = 0.0f;
+
 static void loadWeeklyData() {
     static DayRecord records[MAX_HISTORY_DAYS];
     int count = storageGetRecent(records, MAX_HISTORY_DAYS);
@@ -203,7 +227,53 @@ static void loadWeeklyData() {
             weeklyLabels[i][0] = '\0';
         }
     }
-    Serial.printf("[APP] Weekly data: %d days\n", weeklyCount);
+
+    // Podział na bieżący tydzień (ostatnie 7) i poprzedni
+    prevWeekCount = 0;
+    weeklyChangePercent = 0.0f;
+    if (count > 7) {
+        int curStart = count - 7;
+        int prevEnd  = curStart;
+        int prevStart = (prevEnd > 7) ? prevEnd - 7 : 0;
+        float curSum = 0, prevSum = 0;
+        for (int i = curStart; i < count; i++) curSum += records[i].avgPrice;
+        prevWeekCount = prevEnd - prevStart;
+        for (int i = prevStart; i < prevEnd; i++) {
+            prevWeekAvg[i - prevStart] = records[i].avgPrice;
+            prevSum += records[i].avgPrice;
+        }
+        float curAvg  = curSum / 7.0f;
+        float prevAvg = prevSum / prevWeekCount;
+        if (prevAvg > 0) weeklyChangePercent = ((curAvg - prevAvg) / prevAvg) * 100.0f;
+    }
+
+    Serial.printf("[APP] Weekly data: %d days, change: %.1f%%\n", weeklyCount, weeklyChangePercent);
+}
+
+// ─── Trend cenowy ────────────────────────────────────────────────────────────
+
+static void computePriceTrend(const PriceData &data, int curHour) {
+    if (!todayLoaded || data.totalPeriods == 0) { currentTrend = TREND_FLAT; return; }
+    float cur = data.hourlyAvg[curHour];
+    if (cur <= 0) { currentTrend = TREND_FLAT; return; }
+
+    // Average of next 1-3 hours
+    float sum = 0; int cnt = 0;
+    for (int i = 1; i <= 3; i++) {
+        int h = curHour + i;
+        if (h > 23) break;
+        if (data.hourlyAvg[h] > 0) { sum += data.hourlyAvg[h]; cnt++; }
+    }
+    if (cnt == 0) { currentTrend = TREND_FLAT; return; }
+
+    float future = sum / cnt;
+    float diff = future - cur;
+    float range = data.maxPrice - data.minPrice;
+    float threshold = range * 0.08f;
+
+    if (diff > threshold) currentTrend = TREND_UP;
+    else if (diff < -threshold) currentTrend = TREND_DOWN;
+    else currentTrend = TREND_FLAT;
 }
 
 // ─── Fetch danych z API ───────────────────────────────────────────────────────
@@ -328,7 +398,7 @@ static void drawCurrentScreen(const struct tm &timeinfo) {
     switch (currentScreen) {
         case 0:
             drawToday(todayData, timeinfo.tm_hour, timeinfo.tm_min,
-                      TOTAL_SCREENS, yesterdayAvg);
+                      TOTAL_SCREENS, yesterdayAvg, (int)currentTrend, alertActive);
             break;
         case 1:
             drawTomorrow(tomorrowData, timeinfo.tm_hour, timeinfo.tm_min,
@@ -337,7 +407,8 @@ static void drawCurrentScreen(const struct tm &timeinfo) {
         case 2:
             if (weeklyCount > 0)
                 drawWeekly(weeklyAvg, weeklyLabels, weeklyCount,
-                           timeinfo.tm_hour, timeinfo.tm_min, TOTAL_SCREENS);
+                           timeinfo.tm_hour, timeinfo.tm_min, TOTAL_SCREENS,
+                           weeklyChangePercent, prevWeekAvg, prevWeekCount);
             else
                 drawError("Brak historii");
             break;
@@ -358,6 +429,17 @@ void setup() {
     displayInit();
     touchInit();
     storageInit();
+
+    // ── Załaduj ustawienia użytkownika ──
+    UserSettings saved;
+    if (storageLoadSettings(saved)) {
+        currentBrightness  = saved.brightness;
+        manualBrightness   = saved.manualBright;
+        screensaverEnabled = saved.screensaverOn;
+        priceAlertThreshold = saved.priceAlertThreshold;
+        displaySetBrightness(currentBrightness);
+        Serial.println("[APP] Settings restored from flash");
+    }
 
     // ── Konfiguracja WiFi ──
     WiFi.mode(WIFI_STA);
@@ -430,6 +512,7 @@ void setup() {
             // Włączono → reset timera od teraz
             lastTouchTime = millis();
         }
+        markSettingsDirty();
         Serial.printf("[WEB] Screensaver -> %s\n", screensaverEnabled ? "ON" : "OFF");
     };
     wctx.onAutoBriToggle = []() {
@@ -440,6 +523,13 @@ void setup() {
         } else {
             Serial.printf("[WEB] Brightness -> MANUAL (%d%%)\n", currentBrightness);
         }
+        markSettingsDirty();
+    };
+    wctx.priceAlertThreshold = &priceAlertThreshold;
+    wctx.onAlertThreshold = [](float val) {
+        priceAlertThreshold = val;
+        markSettingsDirty();
+        Serial.printf("[WEB] Alert threshold -> %.0f\n", val);
     };
     wctx.onWiFiSave = nullptr;  // nie potrzeba w STA (obsługa przez /api/wifi-reset)
     webserverInit(wctx);
@@ -534,6 +624,24 @@ void loop() {
     // Fetch danych co 15 min
     if (now - lastFetchTime >= FETCH_INTERVAL_MS || !todayLoaded) {
         fetchAll();
+    }
+
+    // ── Persystencja ustawień (debounce 2s) ─────────────────────────────────
+    if (settingsDirty && (now - settingsDirtyTime >= SETTINGS_DEBOUNCE_MS)) {
+        settingsDirty = false;
+        UserSettings s;
+        s.brightness          = currentBrightness;
+        s.manualBright        = manualBrightness;
+        s.screensaverOn       = screensaverEnabled;
+        s.priceAlertThreshold = priceAlertThreshold;
+        storageSaveSettings(s);
+    }
+
+    // ── Trend + alert ────────────────────────────────────────────────────────
+    if (getLocalTime(&timeinfo) && todayLoaded) {
+        computePriceTrend(todayData, timeinfo.tm_hour);
+        alertActive = (priceAlertThreshold > 0 && todayData.currentPrice > 0
+                       && todayData.currentPrice < priceAlertThreshold);
     }
 
     // ── Logika wygaszacza ─────────────────────────────────────────────────────

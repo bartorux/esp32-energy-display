@@ -155,6 +155,8 @@ function render(){
   <input type="range" class="sl" min="5" max="100" value="${s.brightness}" oninput="$('bv').textContent=this.value+'%'" onchange="setBri(this.value)">
   </div>
   <button class="btn${s.ssEnabled?' on':''}" id="ss">${ssLabel}</button>
+  <label style="font-size:.85em;margin-top:10px">Alert cenowy: <b id="atv">${s.alertThreshold>0?s.alertThreshold+' PLN/MWh':'WY\u0141'}</b></label>
+  <input type="range" class="sl" min="0" max="800" step="10" value="${s.alertThreshold||0}" id="atsl" oninput="$('atv').textContent=this.value>0?this.value+' PLN/MWh':'WY\u0141'" onchange="setAlert(this.value)">
   <button class="btn" id="rb">&#x27F3; Od\u015bwie\u017c dane z PSE</button>
   <button class="btn danger" id="wf" style="margin-top:12px">&#x26A0; Zmie\u0144 WiFi (restart w trybie AP)</button>
   </div>`;
@@ -188,6 +190,7 @@ function render(){
 }
 
 function setBri(v){fetch('/api/brightness?val='+v,{method:'POST'});}
+function setAlert(v){fetch('/api/alert-threshold?val='+v,{method:'POST'});}
 
 async function load(){
  try{
@@ -368,6 +371,8 @@ static void staHandleApi() {
     sys["screensaver"] = *ctx.screenSaverOn;
     sys["ssEnabled"]  = *ctx.screensaverEnabled;
     sys["autoBri"]    = !(*ctx.manualBrightness);
+    if (ctx.priceAlertThreshold)
+        sys["alertThreshold"] = *ctx.priceAlertThreshold;
 
     size_t len = measureJson(doc);
     server.setContentLength(len);
@@ -413,6 +418,18 @@ static void staHandleBrightness() {
         int v = constrain(server.arg("val").toInt(), 0, 100);
         if (ctx.onBrightness) ctx.onBrightness((uint8_t)v);
         server.send(200, "application/json", "{\"ok\":true}");
+    } else {
+        server.send(400, "application/json", "{\"error\":\"missing val\"}");
+    }
+}
+
+static void staHandleAlertThreshold() {
+    if (server.hasArg("val")) {
+        float v = constrain(server.arg("val").toFloat(), 0.0f, 2000.0f);
+        if (ctx.onAlertThreshold) ctx.onAlertThreshold(v);
+        char json[48];
+        snprintf(json, sizeof(json), "{\"ok\":true,\"threshold\":%.0f}", v);
+        server.send(200, "application/json", json);
     } else {
         server.send(400, "application/json", "{\"error\":\"missing val\"}");
     }
@@ -525,6 +542,7 @@ void webserverInit(const WebContext &c) {
     server.on("/api/brightness",   HTTP_POST, staHandleBrightness);
     server.on("/api/autobri",      HTTP_POST, staHandleAutoBri);
     server.on("/api/screensaver",  HTTP_POST, staHandleScreensaver);
+    server.on("/api/alert-threshold", HTTP_POST, staHandleAlertThreshold);
     server.on("/api/wifi-reset",   HTTP_POST, staHandleWiFiReset);
     server.begin();
     Serial.printf("[WEB] STA server started — http://%s.local\n", OTA_HOSTNAME);

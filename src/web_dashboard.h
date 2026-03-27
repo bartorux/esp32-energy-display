@@ -13,12 +13,14 @@ struct WebContext {
     bool    *screenSaverOn;
     bool    *screensaverEnabled;
     bool    *manualBrightness;
+    float   *priceAlertThreshold;
 
     // Callbacki
     void (*onRefresh)();
     void (*onBrightness)(uint8_t);
     void (*onScreensaverToggle)();
     void (*onAutoBriToggle)();
+    void (*onAlertThreshold)(float);
 
     // Callback zapisu WiFi (z AP dashboard)
     void (*onWiFiSave)(const char *ssid, const char *pass);

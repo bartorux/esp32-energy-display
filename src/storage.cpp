@@ -134,3 +134,52 @@ void storageDeleteWiFiCreds() {
         Serial.println("[FS] WiFi creds deleted");
     }
 }
+
+// ─── User settings ───────────────────────────────────────────────────────────
+
+bool storageLoadSettings(UserSettings &s) {
+    File f = LittleFS.open(SETTINGS_PATH, "r");
+    if (!f) return false;
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+    if (err) return false;
+    s.brightness          = doc["bri"]    | 100;
+    s.manualBright        = doc["manual"] | false;
+    s.screensaverOn       = doc["ss"]     | false;
+    s.priceAlertThreshold = doc["at"]     | 0.0f;
+    Serial.printf("[FS] Settings loaded: bri=%d manual=%d ss=%d at=%.0f\n",
+                  s.brightness, s.manualBright, s.screensaverOn, s.priceAlertThreshold);
+    return true;
+}
+
+bool storageSaveSettings(const UserSettings &s) {
+    // Dirty-check: read existing and compare
+    File f = LittleFS.open(SETTINGS_PATH, "r");
+    if (f) {
+        JsonDocument old;
+        if (!deserializeJson(old, f)) {
+            if ((old["bri"]    | 100)    == s.brightness &&
+                (old["manual"] | false)  == s.manualBright &&
+                (old["ss"]     | false)  == s.screensaverOn &&
+                (int)(old["at"] | 0.0f)  == (int)s.priceAlertThreshold) {
+                f.close();
+                return true;  // unchanged
+            }
+        }
+        f.close();
+    }
+
+    JsonDocument doc;
+    doc["bri"]    = s.brightness;
+    doc["manual"] = s.manualBright;
+    doc["ss"]     = s.screensaverOn;
+    doc["at"]     = s.priceAlertThreshold;
+    f = LittleFS.open(SETTINGS_PATH, "w");
+    if (!f) { Serial.println("[FS] Cannot write settings"); return false; }
+    serializeJson(doc, f);
+    f.close();
+    Serial.printf("[FS] Settings saved: bri=%d manual=%d ss=%d at=%.0f\n",
+                  s.brightness, s.manualBright, s.screensaverOn, s.priceAlertThreshold);
+    return true;
+}

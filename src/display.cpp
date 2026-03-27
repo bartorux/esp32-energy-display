@@ -50,24 +50,27 @@ static void updateAnim(float targetT) {
     lastAnimTime = now;
     if (dt > 0.5f) dt = 0.5f;
 
-    smoothT += (targetT - smoothT) * constrain(dt * 0.8f, 0.0f, 1.0f);
+    // Slow convergence — background only changes when price actually changes
+    smoothT += (targetT - smoothT) * constrain(dt * 0.3f, 0.0f, 1.0f);
 
-    animPhase += dt * 0.78f;
+    // Slow phase for subtle edge breathing only
+    animPhase += dt * 0.5f;
     if (animPhase > 6.2832f) animPhase -= 6.2832f;
 }
 
 static void drawBg(float t) {
     updateAnim(t);
 
-    // Triangle wave breathing +-6%
+    // Background uses smoothT directly — no wave modulation on fill color
+    uint16_t bg = priceBg(smoothT);
+
+    // Only edge ring breathes, very subtly (+-2%)
     float wave = animPhase / 3.14159f;
     if (wave > 1.0f) wave = 2.0f - wave;
     wave = wave * 2.0f - 1.0f;  // -1..1
 
-    float at = constrain(smoothT + wave * 0.06f, 0.0f, 1.0f);
-
-    uint16_t bg = priceBg(at);
     float edgeMul = 0.52f + wave * 0.02f;
+    float at = smoothT;
     uint8_t er, eg, eb;
     if (at < 0.5f) {
         float s = at * 2.0f;
@@ -87,16 +90,6 @@ static void drawBg(float t) {
     spr.fillCircle(CENTER_X, CENTER_Y, 113, bg);
 }
 
-static void drawDots(int current, int total) {
-    if (total < 2) return;
-    int y = 222, sp = 12;
-    int sx = CENTER_X - (total - 1) * sp / 2;
-    for (int i = 0; i < total; i++) {
-        int x = sx + i * sp;
-        if (i == current) spr.fillCircle(x, y, 3, C_WHITE);
-        else spr.drawCircle(x, y, 3, C_WHITE60);
-    }
-}
 
 static void drawBarChart(const PriceData &d, int hlIdx) {
     if (d.totalPeriods == 0) return;
@@ -247,19 +240,11 @@ void displaySetBrightness(uint8_t percent) {
 
 void displaySlideOut(int direction) {
     (void)direction;
-    if (!spriteOk) return;
-    // Dim: darken inner area
-    spr.fillCircle(CENTER_X, CENTER_Y, 113, spr.color565(15, 25, 30));
-    spr.pushSprite(0, 0);
-    delay(45);
-    // Dark: full black interior
-    spr.fillCircle(CENTER_X, CENTER_Y, 113, spr.color565(5, 10, 15));
-    spr.pushSprite(0, 0);
-    delay(45);
+    // Instant switch — no transition animation
 }
 
 void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
-               float yesterdayAvg) {
+               float yesterdayAvg, int priceTrend, bool alertActive) {
     if (!spriteOk) return;
 
     float t = priceT(data.currentPrice, data.minPrice, data.maxPrice);
@@ -296,11 +281,36 @@ void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
     spr.setTextFont(7);
     spr.drawString(pBuf, CENTER_X, 52);
 
-    // Unit
+    // Unit + trend arrow
     spr.setTextColor(C_WHITE85);
     spr.setTextFont(2);
     spr.setTextDatum(TC_DATUM);
     spr.drawString("PLN/MWh", CENTER_X, 102);
+
+    if (priceTrend > 0) {
+        spr.setTextColor(spr.color565(255, 140, 60));  // amber = rising
+        spr.drawString("\x18", 175, 102);
+    } else if (priceTrend < 0) {
+        spr.setTextColor(spr.color565(100, 255, 160));  // green = falling
+        spr.drawString("\x19", 175, 102);
+    } else {
+        spr.setTextColor(C_WHITE40);
+        spr.drawString("~", 175, 102);
+    }
+
+    // Alert: pulsing green edge ring
+    if (alertActive) {
+        float pulse = 0.5f + 0.5f * sinf(animPhase * 2.0f);
+        uint8_t ag = (uint8_t)(80 + pulse * 175);
+        uint16_t alertCol = spr.color565(20, ag, 60);
+        for (float a = 0; a < 360.0f; a += 0.8f) {
+            float rad = a * 3.14159f / 180.0f;
+            float cs = cosf(rad), sn = sinf(rad);
+            for (float r = 114.0f; r <= 118.0f; r += 1.0f) {
+                spr.drawPixel(CENTER_X + (int)(cs * r), CENTER_Y + (int)(sn * r), alertCol);
+            }
+        }
+    }
 
     // Separator
     spr.drawFastHLine(48, 122, 144, C_WHITE40);
@@ -311,10 +321,13 @@ void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
     // Chart
     drawBarChart(data, data.currentPeriodIdx);
 
-    // Cheap window recommendation or yesterday comparison
+    // Cheap window recommendation, alert, or yesterday comparison
     spr.setTextDatum(TC_DATUM);
     spr.setTextFont(2);
-    if (data.cheapWindowLen >= 2) {
+    if (alertActive) {
+        spr.setTextColor(spr.color565(100, 255, 160));
+        spr.drawString("TANIO!", CENTER_X, 210);
+    } else if (data.cheapWindowLen >= 2) {
         char rec[24];
         int endH = (data.cheapWindowStart + data.cheapWindowLen) % 24;
         snprintf(rec, sizeof(rec), "Tanio %d-%dh", data.cheapWindowStart, endH);
@@ -333,8 +346,6 @@ void drawToday(const PriceData &data, int hour, int minute, int totalScreens,
     }
 
     // Page dots
-    drawDots(0, totalScreens);
-
     spr.pushSprite(0, 0);
 }
 
@@ -362,7 +373,6 @@ void drawTomorrow(const PriceData &data, int hour, int minute, bool available, i
         spr.setTextFont(1);
         spr.drawString("dane ok. 13:30", CENTER_X, CENTER_Y + 30);
 
-        drawDots(1, totalScreens);
         spr.pushSprite(0, 0);
         return;
     }
@@ -410,14 +420,12 @@ void drawTomorrow(const PriceData &data, int hour, int minute, bool available, i
     // Chart
     drawBarChart(data, -1);
 
-    // Page dots
-    drawDots(1, totalScreens);
-
     spr.pushSprite(0, 0);
 }
 
 void drawWeekly(const float *dailyAvg, const char labels[][6], int count,
-                int hour, int minute, int totalScreens) {
+                int hour, int minute, int totalScreens,
+                float weekChangePercent, const float *prevWeekAvg, int prevWeekCount) {
     if (!spriteOk || count == 0) return;
 
     // Find min/max for scaling
@@ -442,11 +450,21 @@ void drawWeekly(const float *dailyAvg, const char labels[][6], int count,
     spr.setTextFont(2);
     spr.drawString(buf, CENTER_X, 18);
 
-    // Label
+    // Label with change %
     spr.setTextColor(C_WHITE60);
     spr.setTextFont(1);
-    snprintf(buf, sizeof(buf), "TYDZIEN / avg %.0f", avg);
-    spr.drawString(buf, CENTER_X, 38);
+    if (weekChangePercent != 0.0f) {
+        char pctBuf[10];
+        snprintf(pctBuf, sizeof(pctBuf), "%+.1f%%", weekChangePercent);
+        snprintf(buf, sizeof(buf), "TYDZIEN / avg %.0f", avg);
+        spr.drawString(buf, CENTER_X - 20, 38);
+        spr.setTextColor(weekChangePercent > 0 ? spr.color565(255, 100, 100)
+                                               : spr.color565(100, 255, 160));
+        spr.drawString(pctBuf, CENTER_X + 50, 38);
+    } else {
+        snprintf(buf, sizeof(buf), "TYDZIEN / avg %.0f", avg);
+        spr.drawString(buf, CENTER_X, 38);
+    }
 
     // Bar chart area
     const int cx = 32, cy = 58;
@@ -501,8 +519,32 @@ void drawWeekly(const float *dailyAvg, const char labels[][6], int count,
         spr.drawString(labels[i], bx + barW / 2, cy + ch + 3);
     }
 
-    // Page dots
-    drawDots(2, totalScreens);
+    // Ghost bars (previous week) — draw behind, only if enough data
+    if (prevWeekAvg && prevWeekCount > 0) {
+        int ghostCount = min(prevWeekCount, count);
+        // Align ghost bars to the right (most recent prev days)
+        int ghostOffset = count - ghostCount;
+        for (int i = 0; i < ghostCount; i++) {
+            float norm = constrain((prevWeekAvg[prevWeekCount - ghostCount + i] - mn) / range, 0.05f, 1.0f);
+            int bh = (int)(norm * (ch - 10));
+            int bx = startX + (ghostOffset + i) * (barW + 2);
+            int by = cy + ch - bh;
+            spr.drawRect(bx, by, barW, bh, C_WHITE40);
+        }
+    }
+
+    // Trend line connecting bar tops
+    if (count >= 2) {
+        for (int i = 0; i < count - 1; i++) {
+            float n1 = constrain((dailyAvg[i] - mn) / range, 0.05f, 1.0f);
+            float n2 = constrain((dailyAvg[i+1] - mn) / range, 0.05f, 1.0f);
+            int x1 = startX + i * (barW + 2) + barW / 2;
+            int y1 = cy + ch - (int)(n1 * (ch - 10));
+            int x2 = startX + (i+1) * (barW + 2) + barW / 2;
+            int y2 = cy + ch - (int)(n2 * (ch - 10));
+            spr.drawLine(x1, y1, x2, y2, C_WHITE85);
+        }
+    }
 
     spr.pushSprite(0, 0);
 }
