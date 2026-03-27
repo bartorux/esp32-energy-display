@@ -533,19 +533,6 @@ void drawWeekly(const float *dailyAvg, const char labels[][6], int count,
         }
     }
 
-    // Trend line connecting bar tops
-    if (count >= 2) {
-        for (int i = 0; i < count - 1; i++) {
-            float n1 = constrain((dailyAvg[i] - mn) / range, 0.05f, 1.0f);
-            float n2 = constrain((dailyAvg[i+1] - mn) / range, 0.05f, 1.0f);
-            int x1 = startX + i * (barW + 2) + barW / 2;
-            int y1 = cy + ch - (int)(n1 * (ch - 10));
-            int x2 = startX + (i+1) * (barW + 2) + barW / 2;
-            int y2 = cy + ch - (int)(n2 * (ch - 10));
-            spr.drawLine(x1, y1, x2, y2, C_WHITE85);
-        }
-    }
-
     spr.pushSprite(0, 0);
 }
 
